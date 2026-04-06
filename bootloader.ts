@@ -81,7 +81,7 @@ function bootPrecheck(params: IBootParams): IBootParamsParsed {
             throw new Error("Please set the ENCRYPT_PASSWORD to your encryption password.");
         }
 
-        if (params.encryptPassword.length <= 0 && params.encryptPassword.length > 32) {
+        if (params.encryptPassword.length <= 0 || params.encryptPassword.length > 32) {
             throw new Error("ENCRYPT_PASSWORD env variable is not in correct format. Please set it to a password between 1 and 32 characters. Current length: " + params.encryptPassword.length);
         }
 
@@ -444,18 +444,29 @@ export async function createClient(config: {
     saveTimeout?: number;
     saveToDisk?: boolean;
 }): Promise<DICloudApp> {
+    const encryptionPassword = config.encryptPassword ?? "";
+    const shouldEncrypt = config.enableEncrypt ?? false;
+
+    if (shouldEncrypt && !encryptionPassword) {
+        throw new Error("encryptPassword is required when encryption is enabled.");
+    }
+
+    const normalizedPassword = encryptionPassword.length > 0
+        ? ensureStringLength(encryptionPassword, 32)
+        : "";
+
     const app = new DICloudApp({
         intents: [
             GatewayIntentBits.MessageContent,
         ],
-        filesChannelName: config.filesChannelName || "files",
-        metaChannelName: config.metaChannelName || "meta",
+        filesChannelName: config.filesChannelName ?? "files",
+        metaChannelName: config.metaChannelName ?? "meta",
 
-        shouldEncrypt: config.enableEncrypt || false,
-        encryptPassword: config.encryptPassword || "",
+        shouldEncrypt,
+        encryptPassword: normalizedPassword,
 
-        saveTimeout: config.saveTimeout || 2000,
-        saveToDisk: config.saveToDisk || false,
+        saveTimeout: config.saveTimeout ?? 2000,
+        saveToDisk: config.saveToDisk ?? false,
     }, config.guildId);
 
     await app.login(config.token);

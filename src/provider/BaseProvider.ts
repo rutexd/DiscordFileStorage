@@ -5,7 +5,7 @@ import { createVFile, IFile } from "../file/IFile";
 import { PassThrough, pipeline, Readable, Transform, Writable } from "stream";
 import { gcm } from '@noble/ciphers/aes';
 import { Cipher, utf8ToBytes } from '@noble/ciphers/utils';
-import { withResolvers } from "../helper/utils";
+import { ensureStringLength, withResolvers } from "../helper/utils";
 
 import Log from "../Log";
 export interface IDelayedDeletionEntry {
@@ -36,7 +36,17 @@ export default abstract class BaseProvider {
 
 
     private createCipher(iv: Uint8Array): Cipher {
-        const key = utf8ToBytes(this.client.getEncryptPassword());
+        const password = this.client.getEncryptPassword();
+        if (!password) {
+            throw new Error("Encryption password is required to process encrypted files.");
+        }
+
+        let key = utf8ToBytes(password);
+        if (key.length !== 16 && key.length !== 24 && key.length !== 32) {
+            // Keep compatibility with server mode which normalizes to 32 chars.
+            key = utf8ToBytes(ensureStringLength(password, 32));
+        }
+
         return gcm(key, iv);
     }
 
@@ -46,42 +56,47 @@ export default abstract class BaseProvider {
         const decryptedRead = new PassThrough();
 
         const encryptedChunkSize = this.calculateSavedFileSize();
-        const buffer = new MutableBuffer(encryptedChunkSize);
+        const overhead = 16;
+        let pending = Buffer.alloc(0);
 
 
         readStream.on("data", (chunk) => {
             try {
-                const left = encryptedChunkSize - buffer.size;
+                pending = pending.length === 0 ? chunk : Buffer.concat([pending, chunk]);
 
-                if (chunk.length <= left) {
-                    buffer.write(chunk);
-                } else {
-                    buffer.write(chunk.subarray(0, left));
-                    const decrypted = decipher.decrypt(buffer.cloneNativeBuffer());
+                // Process all full non-final chunks right away.
+                while (pending.length > encryptedChunkSize) {
+                    const encChunk = pending.subarray(0, encryptedChunkSize);
+                    const decrypted = decipher.decrypt(encChunk);
                     const writeSuccess = decryptedRead.write(decrypted);
                     if (!writeSuccess) {
                         readStream.pause();
+                        break;
                     }
-                    buffer.clear();
-                    buffer.write(chunk.subarray(left));
+
+                    pending = pending.subarray(encryptedChunkSize);
                 }
             } catch (err) {
                 decryptedRead.destroy(err instanceof Error ? err : new Error(String(err)));
-                buffer.destroy();
             }
         });
 
         readStream.on("end", () => {
             try {
-                if (buffer.size > 0) {
-                    const decrypted = decipher.decrypt(buffer.cloneNativeBuffer());
+                if (pending.length > 0) {
+                    if (pending.length < overhead) {
+                        throw new Error("Encrypted payload is too small to contain an authentication tag.");
+                    }
+
+                    const decrypted = decipher.decrypt(pending);
                     decryptedRead.write(decrypted);
                 }
-                buffer.destroy();
+
                 decryptedRead.end();
             } catch (err) {
-                decryptedRead.destroy(err instanceof Error ? err : new Error(String(err)));
-                buffer.destroy();
+                const error = err instanceof Error ? err : new Error(String(err));
+                error.message = "Failed to decrypt file chunk (wrong password or corrupted chunk): " + error.message;
+                decryptedRead.destroy(error);
             }
         });
 
@@ -91,12 +106,10 @@ export default abstract class BaseProvider {
 
         readStream.on("error", (err) => {
             decryptedRead.destroy(err);
-            buffer.destroy();
         });
 
         decryptedRead.on("error", (err) => {
             readStream.destroy(err);
-            buffer.destroy();
         });
 
         return decryptedRead;

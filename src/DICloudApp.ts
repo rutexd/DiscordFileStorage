@@ -460,6 +460,50 @@ export default class DICloudApp {
     }
 
     /**
+     * Delete a file from virtual filesystem and provider storage.
+     *
+        * - `false`: enqueue chunk deletion and schedule metadata save (non-blocking).
+        * - `true`: delete chunks immediately and save metadata right away.
+     *
+     * @param path - Absolute file path in DICloud virtual FS (for example `/notes/todo.txt`)
+        * @param fast - Whether to perform immediate deletion and metadata save
+     * @returns `true` if file was deleted, `false` if path does not exist
+     */
+        public async deleteFile(path: string, fast: boolean = false): Promise<boolean> {
+        if (path === "/") {
+            throw new Error("Cannot delete root path");
+        }
+
+        if (!this.fs.existsSync(path)) {
+            return false;
+        }
+
+        const stat = this.fs.statSync(path);
+        if (!stat.isFile()) {
+            throw new Error("Path is not a file: " + path);
+        }
+
+        const file = this.fs.getFile(path);
+        if (file.chunks.length > 0) {
+            this.provider.addToDeletionQueue(file.chunks.map(chunk => ({
+                channel: this.getFilesChannel().id,
+                message: chunk.id
+            })));
+        }
+
+        this.fs.rmSync(path, { force: true });
+
+
+        if (fast) {
+            await this.provider.drainDeletionQueue();
+        }
+
+        this.markForUpload();
+
+        return true;
+    }
+
+    /**
      * Internal: Queue old file chunks for deletion (called by VolumeEx)
      */
     public queueChunksForDeletion(chunks: Array<{id: string, size: number}>): void {
