@@ -160,6 +160,16 @@ export default abstract class BaseProvider {
     public abstract processDeletionQueue(): Promise<void>;
 
     /**
+     * Method that should drain the entire deletion queue (called during shutdown).
+     * Default implementation calls processDeletionQueue() in a loop.
+     */
+    public async drainDeletionQueue(): Promise<void> {
+        while (this.deletionQueue.length > 0) {
+            await this.processDeletionQueue();
+        }
+    }
+
+    /**
      * Method that should provide raw read stream for downloading files from provider. Only basic read stream from provider, no decryption or anything else.
      * @param file - File which should be downloaded.
      */

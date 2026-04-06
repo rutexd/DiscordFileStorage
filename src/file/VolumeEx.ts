@@ -8,11 +8,20 @@ export interface IEntry {
 }
 
 export default class VolumeEx extends Volume {
+    private cleanupCallback?: (chunks: Array<{id: string, size: number}>) => void;
 
     public static fromJSON(json: DirectoryJSON, cwd?: string | undefined): VolumeEx {
         const vol = new VolumeEx(cwd);
         vol.fromJSON(json);
         return vol;
+    }
+
+    /**
+     * Set cleanup callback for automatic chunk deletion when files are replaced.
+     * Called by DICloudApp during initialization.
+     */
+    public setCleanupCallback(callback: (chunks: Array<{id: string, size: number}>) => void): void {
+        this.cleanupCallback = callback;
     }
 
     public pathExists(path: string): boolean {
@@ -38,6 +47,18 @@ export default class VolumeEx extends Volume {
     }
 
     public setFile(path: string, file: IFile) {
+        // Automatic cleanup: if file exists, queue old chunks for deletion
+        if (this.cleanupCallback && this.existsSync(path)) {
+            try {
+                const oldFile = this.getFile(path);
+                if (oldFile.chunks && oldFile.chunks.length > 0) {
+                    this.cleanupCallback(oldFile.chunks);
+                }
+            } catch (e) {
+                // File might not be a valid IFile, ignore
+            }
+        }
+        
         this.writeFileSync(path, JSON.stringify(file));
     }
 

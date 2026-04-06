@@ -109,6 +109,26 @@ export default class DiscordFileProvider extends BaseProvider {
         }
     }
 
+    public async drainDeletionQueue(): Promise<void> {
+        Log.info(`[DiscordProvider] Draining deletion queue (${this.deletionQueue.length} items)...`);
+        while (this.deletionQueue.length > 0) {
+            const info = this.deletionQueue.shift()!;
+            const channel = this.client.getDiscordClient().channels.cache.get(info.channel) as TextChannel;
+
+            if (!channel) {
+                Log.error("Failed to find channel: " + info.channel);
+                continue;
+            }
+            try {
+                await channel.messages.delete(info.message);
+            } catch (e) {
+                Log.error(e);
+                Log.error("Failed to delete message: " + info.message + " in channel: " + info.channel);
+            }
+        }
+        Log.info("[DiscordProvider] Deletion queue drained.");
+    }
+
     calculateProviderMaxSize(): number {
         return MAX_CHUNK_SIZE;
     }

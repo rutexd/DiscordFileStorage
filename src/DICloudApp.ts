@@ -283,6 +283,9 @@ export default class DICloudApp {
             this.fs = VolumeEx.fromJSON(data as any);
             this.metadataMessage = message;
 
+            // Set up automatic cleanup callback
+            this.fs.setCleanupCallback((chunks) => this.queueChunksForDeletion(chunks));
+
         } catch (e) {
             Log.error(e);
             printAndExit("Failed to parse JSON file. Is the file corrupted?");
@@ -457,19 +460,39 @@ export default class DICloudApp {
     }
 
     /**
+     * Internal: Queue old file chunks for deletion (called by VolumeEx)
+     */
+    public queueChunksForDeletion(chunks: Array<{id: string, size: number}>): void {
+        if (chunks.length > 0) {
+            this.provider.addToDeletionQueue(chunks.map(chunk => ({
+                channel: this.getFilesChannel().id,
+                message: chunk.id
+            })));
+        }
+    }
+
+    /**
      * Shutdown the DICloud app gracefully.
-     * Saves metadata, stops servers, and disconnects from Discord.
+     * Saves metadata, stops servers, drains deletion queue, and disconnects from Discord.
      * @param saveToDfive - Force save metadata backup to disk
      */
     public async shutdown(saveToDfive: boolean = false): Promise<void> {
+        Log.info("Shutting down DICloud...");
+        
         if (this.webdavServer){
             await this.webdavServer.stopAsync();
         }
         clearInterval(this.tickInterval);
         clearInterval(this.debounceTimeout);
 
+        // Save metadata first
         await this.saveFiles(false, saveToDfive);
+        
+        // Drain all pending deletions before disconnecting
+        await this.provider.drainDeletionQueue();
+        
         await this.discordClient.destroy();
+        Log.info("DICloud shutdown complete.");
     }
 
 }

@@ -7,6 +7,7 @@ export { default as BaseProvider } from "./src/provider/BaseProvider.js";
 export { default as VolumeEx } from "./src/file/VolumeEx.js";
 export { default as WebdavServer } from "./src/webdav/WebdavServer.js";
 export type { IFile, IFilesDesc } from "./src/file/IFile.js";
+export { createVFile } from "./src/file/IFile.js";
 export type { DICloudAppOptions } from "./src/DICloudApp.js";
 export type { IBootParams, IBootParamsParsed, IUserRecord };
 
