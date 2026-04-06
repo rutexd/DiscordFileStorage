@@ -10,7 +10,6 @@ import { createVFile } from "../file/IFile";
 import DICloudApp from "../DICloudApp.js";
 import VolumeEx from "../file/VolumeEx.js";
 import Log from "../Log.js";
-import { ENCRYPTION_OVERHEAD } from "../provider/DiscordFileProvider";
 
 
 class VirtualDiscordFileSystemSerializer implements v2.FileSystemSerializer {
@@ -85,10 +84,6 @@ export default class DiscordWebdavFilesystemHandler extends v2.FileSystem {
 
         if (stat.isFile()) {
             const file = this.fs.getFile(path.toString());
-
-            if(file.encrypted){
-                return callback(undefined, file.size - (ENCRYPTION_OVERHEAD * file.chunks.length)); // -16 bytes for each chunk for encryption metadata. client side will wait for full file, so if we provide size with metadata, which exists only on the server, the client will wait for the metadata to be downloaded which will never happen.
-            }
             return callback(undefined, file.size);
         }
         return callback(undefined, this.fs.getTreeSizeRecursive(path.toString()));
@@ -145,7 +140,7 @@ export default class DiscordWebdavFilesystemHandler extends v2.FileSystem {
         }
 
         if (ctx.type.isFile) {
-            this.fs.setFile(path.toString(), createVFile(path.fileName(), 0, this.client.shouldEncryptFiles()));
+            this.fs.setFile(path.toString(), createVFile(path.fileName(), this.client.shouldEncryptFiles()));
         }
 
         this.client.markForUpload();
@@ -272,10 +267,12 @@ export default class DiscordWebdavFilesystemHandler extends v2.FileSystem {
             this.fs.mkdirSync(path.parse(pathTo.toString()).dir, { recursive: true });
 
             const oldFile = this.fs.getFile(pathFrom.toString());
-            const newFile = createVFile(pathTo.fileName(), oldFile.size, oldFile.encrypted);
+            const newFile = createVFile(pathTo.fileName(), oldFile.encrypted);
+            newFile.size = oldFile.size
 
             const readStream = await this.client.getProvider().createReadStream(oldFile);
             const writeStream = await this.client.getProvider().createWriteStream(newFile);
+
 
             writeStream.on("error", (err) => {
                 Log.info(".copy", "Stream error: " + pathTo.toString() + " | " + err);

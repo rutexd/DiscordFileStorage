@@ -5,7 +5,7 @@ import client from "./helper/AxiosInstance.js";
 import { AxiosError } from "axios";
 import { IChunkInfo, IFile } from "./file/IFile.js";
 import { Readable, PassThrough } from "stream";
-// import { patchEmitter } from "./helper/EventPatcher.js";
+import { userAgent } from "./Strings.js";
 
 
 export default class HttpStreamPool {
@@ -13,7 +13,7 @@ export default class HttpStreamPool {
     private totalSize: number;
     private gotSize = 0;
     private currentUrlIndex = 0;
-    private userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.0.0 Safari/537.36"
+    private userAgent = userAgent
     private downloadingFileName: string;
     private isCancelled = false;
 
@@ -37,7 +37,7 @@ export default class HttpStreamPool {
 
         const stream = new PassThrough();
         const next = async () => {
-            if (this.isCancelled) { // extra check against race conditions, since we are using async functions.
+            if (this.isCancelled) {
                 Log.info("[HttpStreamPool] Downloading cancelled: " + this.downloadingFileName);
                 this.cleanupStream(stream);
                 return;
@@ -45,7 +45,6 @@ export default class HttpStreamPool {
 
             if (this.currentUrlIndex >= this.chunks.length) {
                 Log.info("[HttpStreamPool] Downloading finished: " + this.downloadingFileName);
-                // patchEmitter(stream, "HttpStreamPool", [/progress/]);
                 this.cleanupStream(stream);
                 return;
             }

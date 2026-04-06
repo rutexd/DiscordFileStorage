@@ -38,9 +38,15 @@ test("create and read small file", async () => {
     const buffer = Buffer.from(data.content);
     const originalHash = hashBuffer(buffer);
     const uploadedFile = await app.uploadFile(buffer, data.name);
-    assert.is(uploadedFile.size, data.size);
+    
+    // Verify file.size is plaintext size, not encrypted
+    assert.is(uploadedFile.size, data.size, `File size should be plaintext size (${data.size}), got ${uploadedFile.size}`);
 
     const downloadedBuffer = await app.downloadFile(uploadedFile);
+    
+    // Verify downloaded size matches original
+    assert.is(downloadedBuffer.length, data.size, `Downloaded size (${downloadedBuffer.length}) should match original (${data.size})`);
+    
     const downloadedHash = hashBuffer(downloadedBuffer);
     assert.is(downloadedHash, originalHash, 'Hash mismatch: data corrupted during upload/download');
 });
@@ -58,9 +64,15 @@ test("create and read big", async () => {
     const buffer = Buffer.from(data.content);
     const originalHash = hashBuffer(buffer);
     const uploadedFile = await app.uploadFile(buffer, data.name);
-    assert.is(uploadedFile.size, data.size);
+    
+    // Verify file.size is plaintext size, not encrypted (would be ~15000032 with GCM tags)
+    assert.is(uploadedFile.size, data.size, `File size should be plaintext size (${data.size}), got ${uploadedFile.size}`);
 
     const downloadedBuffer = await app.downloadFile(uploadedFile);
+    
+    // Verify downloaded size matches original
+    assert.is(downloadedBuffer.length, data.size, `Downloaded size (${downloadedBuffer.length}) should match original (${data.size})`);
+    
     const downloadedHash = hashBuffer(downloadedBuffer);
     assert.is(downloadedHash, originalHash, 'Hash mismatch: data corrupted during upload/download');
 });
@@ -76,11 +88,17 @@ test("create and read empty file", async () => {
     const buffer = Buffer.from(data.content);
     const originalHash = hashBuffer(buffer);
     const uploadedFile = await app.uploadFile(buffer, data.name);
-    assert.is(uploadedFile.size, data.size);
+    
+    // Verify file.size is 0 for empty file
+    assert.is(uploadedFile.size, data.size, `Empty file size should be 0, got ${uploadedFile.size}`);
 
     const downloadedBuffer = await app.downloadFile(uploadedFile);
-    const downloadedHash = hashBuffer(downloadedBuffer);
+    
+    // Verify downloaded is empty
+    assert.is(downloadedBuffer.length, 0, `Downloaded empty file should have 0 bytes, got ${downloadedBuffer.length}`);
+    
     assert.is(downloadedBuffer.toString(), data.content);
+    const downloadedHash = hashBuffer(downloadedBuffer);
     assert.is(downloadedHash, originalHash, 'Hash mismatch: data corrupted during upload/download');
 });
 

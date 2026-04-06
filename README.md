@@ -10,7 +10,6 @@
    - [Authorization](#authorization)
 - [Last steps](#last-steps)
 - [Known issues](#known-issues)
-- [Limitations](#limitations)
 - [Contributing](#contributing)
 - [Disclaimer](#disclaimer)
 ---
@@ -52,13 +51,13 @@ Create a bot with admin permissions and invite it to your server. If you already
 Copy the link and visit it. Follow the instructions to invite the bot to your server.
 
 ## Setup
-1. Install [NodeJS (Tested on 16)](https://nodejs.org/en/) and [Yarn (Tested on 1.22.10)](https://yarnpkg.com/).
+1. Install [NodeJS (Tested on 16+)](https://nodejs.org/en/) or [Bun](https://bun.sh/).
 2. Clone this repo.
-3. Navigate to the root of the project and run ``yarn install``.
+3. Navigate to the root of the project and run ``yarn install`` or ``bun install``.
 4. Create a file named ``.env`` in the root of the project. There example file ``env.example``, so you can just copy it and rename to ```.env```. You should fill the file with your data (token, server id). Other settings are optional and documented in the file. \
 __If you dont have opportunity to use .env file, you can set environment variables instead, they should have the same names as in `.env.example` file.__
 
-5. To run the bot, run ``yarn boot``. This will compile the project and start the bot.
+5. To run the bot, run ``yarn boot`` or ``bun boot``. This will compile the project and start the bot.
 
 ## SSL
 Warning! At the moment SSL support **is not complete**. You can use it, but you have to be aware of potential security issues, since TLS_REJECT_UNAUTHORIZED is set to 0 because of some temponary problems with requests. \
@@ -72,14 +71,13 @@ If you want to use SSL, you have to generate a certificate. You can use [this](h
 
 ## Encryption
 
-Files in discord are not encrypted. Because of this, the server supports encryption via __AES256-GCM__ algorithm. 
+Files in discord are not encrypted by default. The server supports encryption via **AES-256-CTR** with **HMAC-SHA256** for integrity verification.
+
 To enable encryption:
 1. Set ``ENCRYPT`` to ``true`` in ``.env`` file.
-2. set ``ENCRYPT_PASS`` to your password. This password will be used to encrypt and decrypt files. \
+2. Set ``ENCRYPT_PASS`` to your password. This password will be used to encrypt and decrypt files. \
 **WARNING**. If you lose this password, you **WILL NOT** be able to decrypt your files.
 
-
-***WANING***. Unless its look to work stable, encryption feature **still being tested**. Im not experienced in cryptography, so i cant guarantee that it will be secure or stable. Use it at your own risk.
 
 ## Authorization
 You can set authorization for the server. To do this, set ``AUTH`` to ``true`` in ``.env`` file.
@@ -94,10 +92,6 @@ Once server started, the webdav server will be available on port 3000.
 Windows explorer will support webdav out of the box. You can now [add windows network drive](https://www.maketecheasier.com/map-webdav-drive-windows10/) to localhost:3000 and use DICloud as a regular drive. 
 
 You can also open the webdav server in your **explorer directly**. Just go to ``http://localhost:3000/dav``.
-
-# Limitations
-
-Does not suitable for low memory devices. Uploading and downloading uing in-memory buffer, so it can consume memory.
 
 # Known issues
 
