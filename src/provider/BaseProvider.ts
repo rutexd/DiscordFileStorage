@@ -58,10 +58,8 @@ export default abstract class BaseProvider {
         const decryptTransform = new Transform({
             transform(chunk: Buffer, encoding, callback) {
                 try {
-                    hmac.update(chunk as any);                    
-                
                     const decrypted = decipher.update(chunk as any);
-                
+                    
                     const remaining = expectedSize - outputSize;
                     if (remaining <= 0) {
                         callback();
@@ -70,6 +68,8 @@ export default abstract class BaseProvider {
                     
                     const toOutput = Math.min(decrypted.length, remaining);
                     outputSize += toOutput;
+                    
+                    hmac.update(decrypted.subarray(0, toOutput) as any);
                     
                     callback(null, decrypted.subarray(0, toOutput));
                 } catch (err) {
@@ -134,8 +134,8 @@ export default abstract class BaseProvider {
             write: (chunk: Buffer, encoding, callback) => {
                 try {
                     plainTextSize += chunk.length;
+                    hmac.update(chunk as any);
                     const encrypted = cipher.update(chunk as any);
-                    hmac.update(encrypted as any);
                     const canContinue = rawWriteStream.write(encrypted);
                     
                     if (!canContinue) {
