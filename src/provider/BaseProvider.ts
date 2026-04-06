@@ -56,47 +56,42 @@ export default abstract class BaseProvider {
         const decryptedRead = new PassThrough();
 
         const encryptedChunkSize = this.calculateSavedFileSize();
-        const overhead = 16;
-        let pending = Buffer.alloc(0);
+        const buffer = new MutableBuffer(encryptedChunkSize);
 
 
         readStream.on("data", (chunk) => {
             try {
-                pending = pending.length === 0 ? chunk : Buffer.concat([pending, chunk]);
+                const left = encryptedChunkSize - buffer.size;
 
-                // Process all full non-final chunks right away.
-                while (pending.length > encryptedChunkSize) {
-                    const encChunk = pending.subarray(0, encryptedChunkSize);
-                    const decrypted = decipher.decrypt(encChunk);
+                if (chunk.length <= left) {
+                    buffer.write(chunk);
+                } else {
+                    buffer.write(chunk.subarray(0, left));
+                    const decrypted = decipher.decrypt(new Uint8Array(buffer.cloneNativeBuffer()));
                     const writeSuccess = decryptedRead.write(decrypted);
                     if (!writeSuccess) {
                         readStream.pause();
-                        break;
                     }
-
-                    pending = pending.subarray(encryptedChunkSize);
+                    buffer.clear();
+                    buffer.write(chunk.subarray(left));
                 }
             } catch (err) {
                 decryptedRead.destroy(err instanceof Error ? err : new Error(String(err)));
+                buffer.destroy();
             }
         });
 
         readStream.on("end", () => {
             try {
-                if (pending.length > 0) {
-                    if (pending.length < overhead) {
-                        throw new Error("Encrypted payload is too small to contain an authentication tag.");
-                    }
-
-                    const decrypted = decipher.decrypt(pending);
+                if (buffer.size > 0) {
+                    const decrypted = decipher.decrypt(new Uint8Array(buffer.cloneNativeBuffer()));
                     decryptedRead.write(decrypted);
                 }
-
+                buffer.destroy();
                 decryptedRead.end();
             } catch (err) {
-                const error = err instanceof Error ? err : new Error(String(err));
-                error.message = "Failed to decrypt file chunk (wrong password or corrupted chunk): " + error.message;
-                decryptedRead.destroy(error);
+                decryptedRead.destroy(err instanceof Error ? err : new Error(String(err)));
+                buffer.destroy();
             }
         });
 
@@ -106,10 +101,12 @@ export default abstract class BaseProvider {
 
         readStream.on("error", (err) => {
             decryptedRead.destroy(err);
+            buffer.destroy();
         });
 
         decryptedRead.on("error", (err) => {
             readStream.destroy(err);
+            buffer.destroy();
         });
 
         return decryptedRead;
@@ -140,7 +137,7 @@ export default abstract class BaseProvider {
                 } else {
                     buffer.write(chunk.subarray(0, left), encoding);
                     const f = buffer.flush();
-                    const e = cipher.encrypt(f);
+                    const e = cipher.encrypt(new Uint8Array(f));
                     rawWriteStream.write(e);
                     buffer.clear();
                     buffer.write(chunk.subarray(left), encoding);
@@ -150,7 +147,8 @@ export default abstract class BaseProvider {
             final: async (callback) => {
                 Log.info("[BaseProvider] final() Finalizing upload.");
                 if (buffer.size > 0) {
-                    rawWriteStream.write(cipher.encrypt(buffer.flushAndDestory()));
+                    const bufData = buffer.flushAndDestory();
+                    rawWriteStream.write(cipher.encrypt(new Uint8Array(bufData)));
                 }
                 rawWriteStream.end();
                 await writeStreamAwaiter.promise; // we have to wait for rawWriteStream to finish, otherwise client will close connection too early thinking that upload is finished
