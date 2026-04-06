@@ -47,6 +47,8 @@ export default abstract class BaseProvider {
             key = utf8ToBytes(ensureStringLength(password, 32));
         }
 
+        Log.info("[BaseProvider] Creating cipher with key length:", key.length, "password length:", password.length, "IV:", Array.from(iv).slice(0, 4).join(","));
+
         return gcm(key, iv);
     }
 
@@ -84,6 +86,7 @@ export default abstract class BaseProvider {
         readStream.on("end", () => {
             try {
                 if (buffer.size > 0) {
+                    Log.info("[BaseProvider] Decrypting final chunk, size:", buffer.size, "expected max:", encryptedChunkSize);
                     const decrypted = decipher.decrypt(new Uint8Array(buffer.cloneNativeBuffer()));
                     decryptedRead.write(decrypted);
                 }
@@ -146,10 +149,8 @@ export default abstract class BaseProvider {
             },
             final: async (callback) => {
                 Log.info("[BaseProvider] final() Finalizing upload.");
-                if (buffer.size > 0) {
-                    const bufData = buffer.flushAndDestory();
-                    rawWriteStream.write(cipher.encrypt(new Uint8Array(bufData)));
-                }
+                const bufData = buffer.flushAndDestory();
+                rawWriteStream.write(cipher.encrypt(new Uint8Array(bufData)));
                 rawWriteStream.end();
                 await writeStreamAwaiter.promise; // we have to wait for rawWriteStream to finish, otherwise client will close connection too early thinking that upload is finished
                 callback();
