@@ -3,6 +3,7 @@ dotenv.config();
 
 import * as uvu from 'uvu';
 import * as assert from 'uvu/assert';
+import { createHash } from 'crypto';
 
 import { envBoot } from "../bootloader"
 import DICloudApp from '../src/DICloudApp';
@@ -10,20 +11,18 @@ import DICloudApp from '../src/DICloudApp';
 const test = uvu.test;
 
 let app: DICloudApp;
-let encryptionOffset = 0;
 
 async function sleep(ms: number) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+function hashBuffer(buffer: Buffer): string {
+    return createHash('sha256').update(buffer as any).digest('hex');
+}
+
 
 test('server boot', async () => {
     app = await envBoot();
-
-    if (app.shouldEncryptFiles()) {
-        encryptionOffset = 16 // hardcoded for now, TODO: get later
-    }
-
     assert.ok(app);
 });
 
@@ -37,11 +36,13 @@ test("create and read small file", async () => {
     data.size = Buffer.byteLength(data.content);
 
     const buffer = Buffer.from(data.content);
+    const originalHash = hashBuffer(buffer);
     const uploadedFile = await app.uploadFile(buffer, data.name);
-    assert.is(uploadedFile.size - encryptionOffset, data.size);
+    assert.is(uploadedFile.size, data.size);
 
     const downloadedBuffer = await app.downloadFile(uploadedFile);
-    assert.is(downloadedBuffer.toString(), data.content);
+    const downloadedHash = hashBuffer(downloadedBuffer);
+    assert.is(downloadedHash, originalHash, 'Hash mismatch: data corrupted during upload/download');
 });
 
 test("create and read big", async () => {
@@ -55,11 +56,13 @@ test("create and read big", async () => {
     data.size = Buffer.byteLength(data.content);
 
     const buffer = Buffer.from(data.content);
+    const originalHash = hashBuffer(buffer);
     const uploadedFile = await app.uploadFile(buffer, data.name);
-    assert.is(uploadedFile.size - (encryptionOffset * uploadedFile.chunks.length), data.size);
+    assert.is(uploadedFile.size, data.size);
 
     const downloadedBuffer = await app.downloadFile(uploadedFile);
-    assert.is(downloadedBuffer.toString(), data.content);
+    const downloadedHash = hashBuffer(downloadedBuffer);
+    assert.is(downloadedHash, originalHash, 'Hash mismatch: data corrupted during upload/download');
 });
 
 test("create and read empty file", async () => {
@@ -71,12 +74,14 @@ test("create and read empty file", async () => {
     data.size = Buffer.byteLength(data.content);
 
     const buffer = Buffer.from(data.content);
+    const originalHash = hashBuffer(buffer);
     const uploadedFile = await app.uploadFile(buffer, data.name);
-    assert.is(uploadedFile.size, 0);
+    assert.is(uploadedFile.size, data.size);
 
     const downloadedBuffer = await app.downloadFile(uploadedFile);
+    const downloadedHash = hashBuffer(downloadedBuffer);
     assert.is(downloadedBuffer.toString(), data.content);
-
+    assert.is(downloadedHash, originalHash, 'Hash mismatch: data corrupted during upload/download');
 });
 
 

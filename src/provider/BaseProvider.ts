@@ -2,7 +2,7 @@ import DICloudApp from "../DICloudApp";
 import MutableBuffer from "../helper/MutableBuffer";
 
 import { createVFile, IFile } from "../file/IFile";
-import { PassThrough, pipeline, Readable, Transform, Writable } from "stream";
+import { PassThrough, Readable, Transform, Writable } from "stream";
 import { gcm } from '@noble/ciphers/aes';
 import { Cipher, utf8ToBytes } from '@noble/ciphers/utils';
 import { ensureStringLength, withResolvers } from "../helper/utils";
@@ -27,8 +27,8 @@ export default abstract class BaseProvider {
 
     public addToDeletionQueue(info: IDelayedDeletionEntry[]) {
         this.fileDeletionQueue.push(...info);
+        Log.info(`[BaseProvider] Added ${info.length} entries to deletion queue (total: ${this.fileDeletionQueue.length})`);
     }
-
 
     public get deletionQueue() {
         return this.fileDeletionQueue;
@@ -67,21 +67,22 @@ export default abstract class BaseProvider {
     }
 
     private deriveBlockIV(baseIV: Uint8Array, blockNumber: number): Uint8Array {
-        // XOR the last 4 bytes of IV with block number to create unique IV per block
         const derivedIV = new Uint8Array(baseIV);
         const view = new DataView(derivedIV.buffer);
+        
         const currentValue = view.getUint32(12, true);
-        view.setUint32(12, currentValue ^ blockNumber, true);
+        view.setUint32(12, currentValue + blockNumber, true);
+        
         return derivedIV;
     }
 
     private async createReadStreamWithDecryption(file: IFile): Promise<Readable> {
         const readStream = await this.createRawReadStream(file);
         const decryptedRead = new PassThrough();
-
         const encryptedChunkSize = this.calculateSavedFileSize();
         const buffer = new MutableBuffer(encryptedChunkSize);
         let blockNumber = 0;
+        let outputSize = 0;
 
         readStream.on("data", (chunk) => {
             try {
@@ -91,19 +92,24 @@ export default abstract class BaseProvider {
                     buffer.write(chunk);
                 } else {
                     buffer.write(chunk.subarray(0, left));
-                    
-                    // Decrypt with fresh cipher for this block
                     const blockIV = this.deriveBlockIV(file.iv, blockNumber);
                     const decipher = this.createCipherWithIV(blockIV);
-                    const decrypted = decipher.decrypt(new Uint8Array(buffer.cloneNativeBuffer()));
-                    const writeSuccess = decryptedRead.write(decrypted);
-                    if (!writeSuccess) {
-                        readStream.pause();
+                    const decrypted = decipher.decrypt(buffer.cloneNativeBuffer());
+                    
+                    // Only output what's needed (trim padding)
+                    const remaining = file.size - outputSize;
+                    const toOutput = Math.min(decrypted.length, remaining);
+                    if (toOutput > 0) {
+                        const writeSuccess = decryptedRead.write(decrypted.subarray(0, toOutput));
+                        outputSize += toOutput;
+                        if (!writeSuccess) {
+                            readStream.pause();
+                        }
                     }
-                    blockNumber++;
                     
                     buffer.clear();
                     buffer.write(chunk.subarray(left));
+                    blockNumber++;
                 }
             } catch (err) {
                 decryptedRead.destroy(err instanceof Error ? err : new Error(String(err)));
@@ -114,15 +120,16 @@ export default abstract class BaseProvider {
         readStream.on("end", () => {
             try {
                 if (buffer.size > 0) {
-                    Log.info("[BaseProvider] Decrypting final chunk, size:", buffer.size, "block:", blockNumber, "encrypted data first 32 bytes:", Array.from(buffer.cloneNativeBuffer().slice(0, 32)).join(","));
-                    
-                    // Decrypt final block with fresh cipher
                     const blockIV = this.deriveBlockIV(file.iv, blockNumber);
-                    Log.info("[BaseProvider] Using block IV (last 4 bytes):", Array.from(new Uint8Array(blockIV)).slice(12).join(","));
                     const decipher = this.createCipherWithIV(blockIV);
-                    const decrypted = decipher.decrypt(new Uint8Array(buffer.cloneNativeBuffer()));
-                    Log.info("[BaseProvider] Decrypted to", decrypted.length, "bytes");
-                    decryptedRead.write(decrypted);
+                    const decrypted = decipher.decrypt(buffer.cloneNativeBuffer());
+                    
+                    // Only output remaining plaintext
+                    const remaining = file.size - outputSize;
+                    const toOutput = Math.min(decrypted.length, remaining);
+                    if (toOutput > 0) {
+                        decryptedRead.write(decrypted.subarray(0, toOutput));
+                    }
                 }
                 buffer.destroy();
                 decryptedRead.end();
@@ -153,9 +160,9 @@ export default abstract class BaseProvider {
     private async createWriteStreamWithEncryption(file: IFile): Promise<Writable> {
         const rawWriteStream = await this.createRawWriteStream(file);
         const writeStreamAwaiter = withResolvers();
-
         let buffer = new MutableBuffer(this.calculateProviderMaxSize());
         let blockNumber = 0;
+        let plainTextSize = 0;
 
         rawWriteStream.on("finish", () => {
             writeStreamAwaiter.resolve();
@@ -171,34 +178,33 @@ export default abstract class BaseProvider {
                 const left = this.calculateProviderMaxSize() - buffer.size;
                 if (chunk.length <= left) {
                     buffer.write(chunk, encoding);
+                    plainTextSize += chunk.length;
                 } else {
                     buffer.write(chunk.subarray(0, left), encoding);
-                    const f = buffer.flush();
+                    plainTextSize += left;
                     
-                    // Create fresh cipher for each block
                     const blockIV = this.deriveBlockIV(file.iv, blockNumber);
                     const cipher = this.createCipherWithIV(blockIV);
-                    const e = cipher.encrypt(new Uint8Array(f));
-                    rawWriteStream.write(e);
-                    blockNumber++;
+                    const encrypted = cipher.encrypt(buffer.cloneNativeBuffer());
+                    rawWriteStream.write(encrypted);
                     
                     buffer.clear();
                     buffer.write(chunk.subarray(left), encoding);
+                    plainTextSize += chunk.length - left;
+                    blockNumber++;
                 }
                 callback();
             },
             final: async (callback) => {
-                Log.info("[BaseProvider] final() Finalizing upload, buffer size:", buffer.size, "block:", blockNumber);
-                const bufData = buffer.flushAndDestory();
-                Log.info("[BaseProvider] Encrypting", bufData.length, "bytes, first 32 bytes:", bufData.slice(0, 32));
-                
-                // Create fresh cipher for final block
-                const blockIV = this.deriveBlockIV(file.iv, blockNumber);
-                const cipher = this.createCipherWithIV(blockIV);
-                const encrypted = cipher.encrypt(new Uint8Array(bufData));
-                Log.info("[BaseProvider] Encrypted to", encrypted.length, "bytes (includes 16-byte tag)");
-                rawWriteStream.write(encrypted);
-                
+                Log.info("[BaseProvider] final() Finalizing upload.");
+                if (buffer.size > 0) {
+                    const blockIV = this.deriveBlockIV(file.iv, blockNumber);
+                    const cipher = this.createCipherWithIV(blockIV);
+                    const encrypted = cipher.encrypt(buffer.flushAndDestory());
+                    rawWriteStream.write(encrypted);
+                }
+                // Set file size to plaintext size before closing
+                file.size = plainTextSize;
                 rawWriteStream.end();
                 await writeStreamAwaiter.promise;
                 callback();
@@ -209,14 +215,10 @@ export default abstract class BaseProvider {
                 callback(err);
             }
         });
-
     }
 
 
 
-    /**
-   * Method that should be used to implement queue for deleting files from provider. Queue is used to prevent ratelimiting and other blocking issues.
-   */
     public abstract processDeletionQueue(): Promise<void>;
 
     /**
@@ -229,104 +231,81 @@ export default abstract class BaseProvider {
         }
     }
 
-    /**
-     * Method that should provide raw read stream for downloading files from provider. Only basic read stream from provider, no decryption or anything else.
-     * @param file - File which should be downloaded.
-     */
     public abstract createRawReadStream(file: IFile): Promise<Readable>;
-    /**
-     * Method that should provide raw write stream for uploading files to provider. Only basic write stream to provider, no encryption or anything else.
-     * @param file - File which should be uploaded.
-     * @param callbacks  - Callbacks for write stream.
-     */
+
     public abstract createRawWriteStream(file: IFile): Promise<Writable>;
 
-
     /**
-     * Custom provider should implement this method to provide max file size.
+     * Returns the maximum size a single chunk can be in the provider.
+     * Used to determine encryption block boundaries.
      */
     abstract calculateProviderMaxSize(): number;
-    abstract calculateSavedFileSize(): number;
-
-
-    /* ----------------------------------------------------------------------------------------- */
-
 
     /**
-     * Main method that should be used to download files from provider.
-     * Creates read stream for downloading files from provider. Handles decryption if enabled.
-     * Does not handle with any fs operations, only downloads from provider.
-     * @param file 
-     * @returns 
+     * Returns the stored file size after encryption (includes overhead).
+     * Used to align decryption buffers correctly.
      */
+    abstract calculateSavedFileSize(): number;
+
     async createReadStream(file: IFile): Promise<Readable> {
         if (file.encrypted) {
+            Log.info(`[BaseProvider] Creating encrypted read stream for "${file.name}"`);
             return await this.createReadStreamWithDecryption(file);
         }
-
+        Log.info(`[BaseProvider] Creating raw read stream for "${file.name}"`);
         return await this.createRawReadStream(file);
     }
 
-    /**
-     * Main method that should be used to upload files to provider.
-     * Creates write stream for uploading files to provider. Handles encryption if enabled.
-     * Does not handle with any fs operations, only uploads to provider.
-     * Mutates the file object (chunks and size)
-     * @param file - file to upload
-     * @param callbacks - callbacks for write stream. 
-     * @returns write stream
-     */
     async createWriteStream(file: IFile): Promise<Writable> {
         if (file.encrypted) {
+            Log.info(`[BaseProvider] Creating encrypted write stream for "${file.name}"`);
             return await this.createWriteStreamWithEncryption(file);
         }
-
+        Log.info(`[BaseProvider] Creating raw write stream for "${file.name}"`);
         return await this.createRawWriteStream(file);
     }
 
-    /**
-     * Convinient buffer upload function
-     * @param buffer Buffer with file data
-     * @param name Filename. Not really used, but can be used for logging or other purposes.
-     * @returns created file struct with all data about file.
-     */
     public async uploadFile(buffer: Buffer, name: string): Promise<IFile> {
         const file = createVFile(name, 0, this.client.shouldEncryptFiles());
         const stream = await this.createWriteStream(file);
 
+        // Set the plaintext size upfront so encrypted files preserve original size
+        file.size = buffer.length;
+
         return new Promise(async (resolve, reject) => {
             stream.on("finish", () => {
+                Log.info(`[BaseProvider] uploadFile("${name}") complete - ${file.size} bytes`);
                 resolve(file);
             });
 
             stream.on("error", (err) => {
+                Log.error(`[BaseProvider] uploadFile("${name}") failed:`, err);
                 reject(err);
             });
+            
             Readable.from(buffer).pipe(stream);
         });
     }
 
-    /**
-     * Convinient download function that downloads file from provider and returns it as buffer.
-     * @param file valid file struct
-     * @returns Buffer with file data
-     */
     public async downloadFile(file: IFile): Promise<Buffer> {
         const stream = await this.createReadStream(file);
-        const size = file.encrypted ? file.size - (16 * file.chunks.length) : file.size;
 
         return new Promise((resolve, reject) => {
-            const buffer = new MutableBuffer(size);
-            stream.on("data", (chunk) => {
-                buffer.write(chunk)
+            const buffers: Buffer[] = [];
+            let totalSize = 0;
+
+            stream.on("data", (chunk: Buffer) => {
+                buffers.push(chunk);
+                totalSize += chunk.length;
             });
 
             stream.on("end", () => {
-                resolve(buffer.flushAndDestory());
+                Log.info(`[BaseProvider] downloadFile("${file.name}") complete - ${totalSize} bytes`);
+                resolve(Buffer.concat(buffers as any, totalSize));
             });
 
             stream.on("error", (err) => {
-                buffer.destroy();
+                Log.error(`[BaseProvider] downloadFile("${file.name}") failed:`, err);
                 reject(err);
             });
         });

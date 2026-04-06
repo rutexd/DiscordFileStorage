@@ -14,4 +14,6 @@
 		"declaration": true,
 		"declarationMap": true
 	},
+	"include": ["src/**/*", "tests/**/*", "bootloader.ts", "index.ts"],
+	"exclude": ["examples/**/*"]
 }
