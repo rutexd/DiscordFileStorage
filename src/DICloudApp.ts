@@ -413,7 +413,7 @@ export default class DICloudApp {
      * @returns Writable stream for uploading file data
      */
     public createWriteStream(file: IFile): Promise<Writable> {
-        return this.provider.createRawWriteStream(file);
+        return this.provider.createWriteStream(file);
     }
 
     /**
