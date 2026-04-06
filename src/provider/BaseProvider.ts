@@ -114,12 +114,14 @@ export default abstract class BaseProvider {
         readStream.on("end", () => {
             try {
                 if (buffer.size > 0) {
-                    Log.info("[BaseProvider] Decrypting final chunk, size:", buffer.size, "block:", blockNumber);
+                    Log.info("[BaseProvider] Decrypting final chunk, size:", buffer.size, "block:", blockNumber, "encrypted data first 32 bytes:", Array.from(buffer.cloneNativeBuffer().slice(0, 32)).join(","));
                     
                     // Decrypt final block with fresh cipher
                     const blockIV = this.deriveBlockIV(file.iv, blockNumber);
+                    Log.info("[BaseProvider] Using block IV (last 4 bytes):", Array.from(new Uint8Array(blockIV)).slice(12).join(","));
                     const decipher = this.createCipherWithIV(blockIV);
                     const decrypted = decipher.decrypt(new Uint8Array(buffer.cloneNativeBuffer()));
+                    Log.info("[BaseProvider] Decrypted to", decrypted.length, "bytes");
                     decryptedRead.write(decrypted);
                 }
                 buffer.destroy();
@@ -186,13 +188,16 @@ export default abstract class BaseProvider {
                 callback();
             },
             final: async (callback) => {
-                Log.info("[BaseProvider] final() Finalizing upload.");
+                Log.info("[BaseProvider] final() Finalizing upload, buffer size:", buffer.size, "block:", blockNumber);
                 const bufData = buffer.flushAndDestory();
+                Log.info("[BaseProvider] Encrypting", bufData.length, "bytes, first 32 bytes:", bufData.slice(0, 32));
                 
                 // Create fresh cipher for final block
                 const blockIV = this.deriveBlockIV(file.iv, blockNumber);
                 const cipher = this.createCipherWithIV(blockIV);
-                rawWriteStream.write(cipher.encrypt(new Uint8Array(bufData)));
+                const encrypted = cipher.encrypt(new Uint8Array(bufData));
+                Log.info("[BaseProvider] Encrypted to", encrypted.length, "bytes (includes 16-byte tag)");
+                rawWriteStream.write(encrypted);
                 
                 rawWriteStream.end();
                 await writeStreamAwaiter.promise;
