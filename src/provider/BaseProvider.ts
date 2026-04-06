@@ -52,14 +52,36 @@ export default abstract class BaseProvider {
         return gcm(key, iv);
     }
 
+    private createCipherWithIV(iv: Uint8Array): Cipher {
+        const password = this.client.getEncryptPassword();
+        if (!password) {
+            throw new Error("Encryption password is required to process encrypted files.");
+        }
+
+        let key = utf8ToBytes(password);
+        if (key.length !== 16 && key.length !== 24 && key.length !== 32) {
+            key = utf8ToBytes(ensureStringLength(password, 32));
+        }
+
+        return gcm(key, iv);
+    }
+
+    private deriveBlockIV(baseIV: Uint8Array, blockNumber: number): Uint8Array {
+        // XOR the last 4 bytes of IV with block number to create unique IV per block
+        const derivedIV = new Uint8Array(baseIV);
+        const view = new DataView(derivedIV.buffer);
+        const currentValue = view.getUint32(12, true);
+        view.setUint32(12, currentValue ^ blockNumber, true);
+        return derivedIV;
+    }
+
     private async createReadStreamWithDecryption(file: IFile): Promise<Readable> {
         const readStream = await this.createRawReadStream(file);
-        const decipher = this.createCipher(file.iv);
         const decryptedRead = new PassThrough();
 
         const encryptedChunkSize = this.calculateSavedFileSize();
         const buffer = new MutableBuffer(encryptedChunkSize);
-
+        let blockNumber = 0;
 
         readStream.on("data", (chunk) => {
             try {
@@ -69,11 +91,17 @@ export default abstract class BaseProvider {
                     buffer.write(chunk);
                 } else {
                     buffer.write(chunk.subarray(0, left));
+                    
+                    // Decrypt with fresh cipher for this block
+                    const blockIV = this.deriveBlockIV(file.iv, blockNumber);
+                    const decipher = this.createCipherWithIV(blockIV);
                     const decrypted = decipher.decrypt(new Uint8Array(buffer.cloneNativeBuffer()));
                     const writeSuccess = decryptedRead.write(decrypted);
                     if (!writeSuccess) {
                         readStream.pause();
                     }
+                    blockNumber++;
+                    
                     buffer.clear();
                     buffer.write(chunk.subarray(left));
                 }
@@ -86,7 +114,11 @@ export default abstract class BaseProvider {
         readStream.on("end", () => {
             try {
                 if (buffer.size > 0) {
-                    Log.info("[BaseProvider] Decrypting final chunk, size:", buffer.size, "expected max:", encryptedChunkSize);
+                    Log.info("[BaseProvider] Decrypting final chunk, size:", buffer.size, "block:", blockNumber);
+                    
+                    // Decrypt final block with fresh cipher
+                    const blockIV = this.deriveBlockIV(file.iv, blockNumber);
+                    const decipher = this.createCipherWithIV(blockIV);
                     const decrypted = decipher.decrypt(new Uint8Array(buffer.cloneNativeBuffer()));
                     decryptedRead.write(decrypted);
                 }
@@ -118,10 +150,10 @@ export default abstract class BaseProvider {
 
     private async createWriteStreamWithEncryption(file: IFile): Promise<Writable> {
         const rawWriteStream = await this.createRawWriteStream(file);
-        const cipher = this.createCipher(file.iv);
         const writeStreamAwaiter = withResolvers();
 
         let buffer = new MutableBuffer(this.calculateProviderMaxSize());
+        let blockNumber = 0;
 
         rawWriteStream.on("finish", () => {
             writeStreamAwaiter.resolve();
@@ -140,8 +172,14 @@ export default abstract class BaseProvider {
                 } else {
                     buffer.write(chunk.subarray(0, left), encoding);
                     const f = buffer.flush();
+                    
+                    // Create fresh cipher for each block
+                    const blockIV = this.deriveBlockIV(file.iv, blockNumber);
+                    const cipher = this.createCipherWithIV(blockIV);
                     const e = cipher.encrypt(new Uint8Array(f));
                     rawWriteStream.write(e);
+                    blockNumber++;
+                    
                     buffer.clear();
                     buffer.write(chunk.subarray(left), encoding);
                 }
@@ -150,9 +188,14 @@ export default abstract class BaseProvider {
             final: async (callback) => {
                 Log.info("[BaseProvider] final() Finalizing upload.");
                 const bufData = buffer.flushAndDestory();
+                
+                // Create fresh cipher for final block
+                const blockIV = this.deriveBlockIV(file.iv, blockNumber);
+                const cipher = this.createCipherWithIV(blockIV);
                 rawWriteStream.write(cipher.encrypt(new Uint8Array(bufData)));
+                
                 rawWriteStream.end();
-                await writeStreamAwaiter.promise; // we have to wait for rawWriteStream to finish, otherwise client will close connection too early thinking that upload is finished
+                await writeStreamAwaiter.promise;
                 callback();
             },
             destroy: (err, callback) => {
