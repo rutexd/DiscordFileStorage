@@ -2,19 +2,19 @@
   "name": "dicloud",
   "version": "2.2.0",
   "description": "Use Discord as cloud storage backend - WebDAV server with file management, encryption, and programmatic API",
-  "main": "out/index.js",
-  "types": "out/index.d.ts",
+  "module": "index.ts",
+  "types": "index.ts",
   "exports": {
     ".": {
-      "types": "./out/index.d.ts",
-      "require": "./out/index.js",
-      "import": "./out/index.js"
+      "types": "./index.ts",
+      "default": "./index.ts"
     }
   },
   "files": [
-    "out/**/*.js",
-    "out/**/*.d.ts",
-    "out/**/*.d.ts.map",
+    "*.ts",
+    "src/**/*.ts",
+    "tests/**/*.ts",
+    "examples/**/*.ts",
     "README.md",
     "LICENSE"
   ],
