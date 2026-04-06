@@ -1,6 +1,5 @@
-import { DirectoryJSON, Volume } from "memfs/lib/volume.js";
+import { DirectoryJSON, Volume } from "memfs";
 import { IFile } from "./IFile.js";
-import Dirent from "memfs/lib/Dirent.js";
 
 export interface IEntry {
     file: boolean,
@@ -65,8 +64,8 @@ export default class VolumeEx extends Volume {
     private getFilesPathsRecursive(initial: string, paths: string[] = []) {
         const entries = this.readdirSync(initial, { withFileTypes: true });
         for (const entry of entries) {
-            const path = initial === '/' ? '/' + (entry as Dirent).name : initial + '/' + (entry as Dirent).name;
-            if ((entry as Dirent).isDirectory()) {
+            const path = initial === '/' ? '/' + (entry as any).name : initial + '/' + (entry as any).name;
+            if ((entry as any).isDirectory()) {
                 this.getFilesPathsRecursive(path, paths);
             } else {
                 paths.push(path);
@@ -98,8 +97,8 @@ export default class VolumeEx extends Volume {
     public getFilesAndFolders(path: string): IEntry[] {
         return this.readdirSync(path, { withFileTypes: true }).map((entry) => {
             return {
-                file: (entry as Dirent).isFile(),
-                name: (entry as Dirent).name.toString(),
+                file: (entry as any).isFile(),
+                name: (entry as any).name.toString(),
             }
         });
     }
